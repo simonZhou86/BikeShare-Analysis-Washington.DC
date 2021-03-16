@@ -1,0 +1,723 @@
+---
+title: "STAT457_Midterm_Project"
+author: "By Simon Zhou"
+date: "2020/3/18"
+output:
+  word_document: default
+  html_document:
+    df_print: paged
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Introduction:
+
+Over the past several years, bike sharing become more and more popular around all over the world. People are able to rent a bike from one location and return it to a different location by using Bike sharing system. In this project, I would like to use R Programming Language to analyze the bike share data provided by Kaggle Competition and Captical Bikeshare. The goal for this project is to forcast bike rental demand hourly in the Capital Bikeshare program in Washington, D.C.
+
+### Data Set:
+
+I will be using the following dataset in this project:
+https://www.kaggle.com/c/bike-sharing-demand/data: This including three datasets: training dataset, testing dataset and a sample submission dataset. I will give a brief explanation for each dataset.
+
+Training dataset: This dataset contains data for training purpose. Furthermore, this dataset only contains first 19 days for each month, from 2011-2012.
+
+Test dataset: This dataset is used for testing purpose. It only contains 20th day to the end of each month, from 2011-2012.
+
+Sample Submission dataset: This dataset is a sample submission file, it contains 2 columns. The first one is datetime, and the second columns is number of rent(count), which is the variable than I am going to predict.
+
+### Data Fields:(more details are in https://www.kaggle.com/c/bike-sharing-demand/data)
+There are 12 variables in training dataset.
+Datetime: hourly date + timestamp
+season: 1 = spring, 2 = summer, 3 = fall, 4 = winter
+holiday: whether the day is considered a holiday
+workingday: whether the day is neither a weekend nor holiday
+weather:
+1: Clear, Few clouds, Partly cloudy, Partly cloudy
+2: Mist + Cloudy, Mist + Broken clouds, Mist + Few clouds, Mist
+3: Light Snow, Light Rain + Thunderstorm + Scattered clouds, Light Rain + Scattered clouds
+4: Heavy Rain + Ice Pallets + Thunderstorm + Mist, Snow + Fog 
+temp: temperature in Celsius
+atemp: "feels like" temperature in Celsius
+humidity: relative humidity
+windspeed: wind speed
+casual: number of non-registered user rentals initiated
+registered: number of registered user rentals initiated
+count: number of total rentals
+
+### Data Policy:
+Here is the Data policy from Captial bikeshare website: https://www.capitalbikeshare.com/data-license-agreement
+
+1. I will not sell this Data as a stand-alone dataset.
+2. I will not attempt to correlare the Data with names, addresses, or other information of customers or members of Motivate.
+3. This data will be only used by me through this project.
+
+
+## Data Cleaning and Preprocessing:
+
+I will start with cleaning the training dataset and perform some preprocessing steps.
+
+```{r}
+library(lubridate)
+library(dplyr)
+train_data <- read.csv('C:/Users/Simon/Documents/R/train_bikeshare.csv', header = TRUE) ## Gneral view of training data
+test_data <- read.csv('C:/Users/Simon/Documents/R/test_bikeshare.csv', header = TRUE)
+#head(train_data, 10)
+#head(test_data, 10)
+#str(train_data)
+#str(test_data)
+```
+
+Notice that number of casual plus number of registered is equals to count. Therefore, I decide to drop these two columnns. Also I change seasons, weather, and holiday/workingday to factor and add some columns based on datetime:
+
+```{r}
+preprocessing <- function(old_data){
+  #drops two variables: 'casual','registered'
+  cf = c("datetime","season","holiday","workingday",
+         "weather","temp","atemp","humidity","windspeed") 
+  new_data = old_data[, cf]
+  
+  #add more variances, from datetime
+  new_data$hour <- hour(ymd_hms(old_data$datetime)) #hour is an integer
+  new_data$hourf <- as.factor(new_data$hour)
+  new_data$year <- as.factor(year(old_data$datetime))
+  new_data$month <- as.factor(month(old_data$datetime))
+  new_data$mday <-  as.factor(mday(old_data$datetime))
+  new_data$wday <- ifelse(wday(old_data$datetime)==1, 7, wday(old_data$datetime)-1)
+  new_data$wday <- as.factor(new_data$wday)
+  #new_data$wday_visual <- factor(new_data$wday, labels = c("Mon", "Tue", "Wed", "Thur", "Fri", "Sat", "Sun"))
+
+  #season
+  new_data$season = as.factor(new_data$season)
+  #new_data$season_visual <- factor(new_data$season, labels = c("Spring", "Summer", "Fall", "Winter"))
+  
+  #weather, make 4 to 3
+  new_data$weather[new_data$weather == 4] = 3
+  new_data$weather = as.factor(new_data$weather)
+  #new_data$weather_visual <- factor(new_data$weather, labels = c("Good", "Normal", "Very Bad"))
+  
+  #make holiday,workingday factor
+  new_data$holiday = as.factor(new_data$holiday)
+  new_data$workingday = as.factor(new_data$workingday)
+  
+  return(new_data)
+}
+
+train_new <- preprocessing(train_data)
+train_new$count <- train_data$count
+#head(train_new, 10)
+
+test_new <- preprocessing(test_data)
+test_new <- select(test_new, -c(hourf))
+#head(test_new, 10)
+```
+
+```{r}
+str(train_new)
+```
+
+
+## Exploratory Data Analysis and Feature Engineering:
+
+
+In this section, I will perform some data visualization and feature engineering on both datasets.
+
+
+### Missing value Analysis:
+First, let's see whether there are some missing values in both training and test dataset:
+
+```{r}
+which(is.na(train_new))
+which(is.na(test_new))
+```
+
+Note that there is no return from above command. Therefore, there is no missing value in both datasets.
+
+
+### Basic Data Visualizations:
+```{r}
+library(ggplot2)
+library(plyr)
+library(dplyr)
+```
+
+
+```{r}
+ggplot(train_new, aes(temp, count)) + 
+  geom_bar(stat = 'identity', fill = 'steelblue')+
+  #geom_text(aes(label = count), vjust = 0.3, color = 'white', size = 3.5)+
+  theme_minimal()
+```
+
+From the abover figure, I could see that when temperature is around 30 degrees celsius, the number of counts are relatively high comparing to other temperatures. 
+
+```{r}
+train_new$weather_visual <- factor(train_new$weather, labels = c("Good", "Normal", "Very Bad"))
+weather_visualiza <- ddply(train_new, .(weather_visual, hourf), summarise, count = mean(count))
+ggplot(train_new, aes(x = hourf, y = count, color = weather_visual)) + 
+  geom_point(data = weather_visualiza, aes(group = weather_visual)) + 
+  geom_line(data = weather_visualiza, aes(group = weather_visual)) + 
+  scale_x_discrete("hour") + 
+  scale_y_continuous("count") + 
+  theme_minimal() +
+  ggtitle('Count based on Weather') +
+  theme(plot.title = element_text(size = 15))
+```
+
+From above figure, I could see people are often willing to go out when the weather is good or normal. 
+
+```{r}
+train_new$season_visual <- factor(train_new$season, labels = c("Spring", "Summer", "Fall", "Winter"))
+season_visualiza <- ddply(train_new, .(season_visual, hourf), summarise, count = mean(count))
+ggplot(train_new, aes(x = hourf, y = count, color = season_visual)) +
+  geom_point(data = season_visualiza, aes(group = season_visual)) + 
+  geom_line(data = season_visualiza, aes(group = season_visual)) + 
+  scale_x_discrete("hour") + 
+  scale_y_continuous("count") + 
+  theme_minimal() + 
+  ggtitle('Season Vs. Count') + 
+  theme(plot.title = element_text(size = 15))
+```
+
+From the above figure, I could see that summer and spring will have relatively high counts comparing to spring and winter. This may because of weather in summer and fall are relatively warmer than the other seasons 
+
+```{r}
+train_new$wday_visual <- factor(train_new$wday, labels = c("Mon", "Tue", "Wed", "Thur", "Fri", "Sat", "Sun"))
+wday_visualiza <- ddply(train_new, .(wday_visual, hourf), summarise, count = mean(count))
+ggplot(train_new, aes(x = hourf, y = count, color = wday_visual)) + 
+  geom_point(data = wday_visualiza, aes(group = wday_visual)) + 
+  geom_line(data = wday_visualiza, aes(group = wday_visual)) + 
+  scale_x_discrete("hour") + 
+  scale_y_continuous("count") + 
+  theme_minimal() + 
+  ggtitle('Weekdays Vs. Count') + 
+  theme(plot.title = element_text(size = 20))
+```
+
+From the above figure, I could see that from monday to friday, the highest number of counts appears at 7-8am and 5-6pm. This is because during 7-8am, people are often going to work at this time, so the number of counts will increase. For the same reason, during 5-6pm, people are often going to home, so the number of counts will also increase. As for weekend, the highest number of counts appears at 1-3pm. This may because people often finish lunch at this time and go out for a walk.  
+
+
+
+Box plots:
+```{r}
+ggplot(train_new, aes(x = weather_visual, y = count)) + 
+  geom_boxplot(aes(color = weather_visual), alpha = 0.3) + 
+  ggtitle("Boxplot for weather Vs. count") + 
+  theme_bw()
+ggplot(train_new, aes(x = wday_visual, y = count)) + 
+  geom_boxplot(aes(color = wday_visual), alpha = 0.3) + 
+  ggtitle("Boxplot for weekday Vs. count") + 
+  theme_bw()
+ggplot(train_new, aes(x = hourf, y = count)) + 
+  geom_boxplot(aes(color = hourf), alpha = 0.3) + 
+  ggtitle("Boxplot for hour Vs. count") + 
+  theme_bw()
+ggplot(train_new, aes(x = hourf, y = log(count))) + 
+  geom_boxplot(aes(color = hourf), alpha = 0.3) + 
+  ggtitle("Boxplot for hour Vs. log(count)") + 
+  theme_bw()
+```
+
+Even though there are some outliers in hour Vs. count plot, they are generated not due to human error and should be condidered as natural error. However, in terms of accurancy for the model, I will eliminate outliers just for now. The last plot is perform a log transformation on the variable "count".
+
+
+```{r}
+removeOutlier <- function(old_data){
+  new_data <- old_data
+  quan <- quantile(new_data$count, probs = c(0.25,0.75), na.rm = FALSE)
+  iqr <- IQR(new_data$count)
+  up_limit <- quan[2] + 1.5 * iqr
+  lower_limit <- quan[1] - 1.5 * iqr
+  new_data <- subset(new_data, (new_data$count > lower_limit & new_data$count < up_limit))
+  return(new_data)
+}
+
+train_no_Out <- removeOutlier(train_new)
+#head(train_no_Out, 10)
+```
+
+303 outliers
+
+```{r}
+ggplot(data = train_new, aes(windspeed)) + 
+  geom_histogram(aes(y = ..density..), binwidth = 7, fill = 'steelblue') + 
+  geom_density(alpha = 0.2, fill = "#FF6666") + 
+  ggtitle("Count of windspeed in training dataset") + 
+  theme_bw()
+
+ggplot(data = test_data, aes(windspeed)) + 
+  geom_histogram(aes(y = ..density..), binwidth = 7, fill = 'steelblue') + 
+  ggtitle("Count of windspeed in test dataset") + 
+  geom_density(alpha = 0.2, fill = "#FF6666") + 
+  theme_bw()
+```
+
+Note that there are many 0 windspeed in this dataset. One proper explanation would be there are essentially NA values, and then replace by 0. This will cause a problem when we predict the response. I will use a popular method to replace the 0 windspeed. This problem occures in both training and testing dataset.
+
+I will proceed by taking out those rows that not have 0 windspeed, and use Random Forest to build up a model for those rows and then predict the for the 0 windspeed rows. 
+
+
+### Random Forest Algorithm to predict and replace for 0 windspeed:
+
+I will proceed by laveraging Random Forest Algorithm and do some data cleaning/processing.
+
+```{r}
+library(randomForest)
+set.seed(3)
+predictWind <- function(old_data){
+   cf = c("datetime", "season","holiday","workingday",
+         "weather","temp","atemp","humidity","windspeed", "hour", "year", "month", "mday", "wday") 
+   new_data <- old_data[, cf]
+   new_data_win0 <- new_data[which(new_data["windspeed"] == 0), ]
+   new_data_winN0 <- new_data[which(new_data["windspeed"] != 0), ]
+   winModel <- randomForest(windspeed ~ season+weather+humidity+temp+hour+atemp, data = new_data_winN0, importance = TRUE, ntree= 500)
+   rf.pred <- predict(winModel, newdata = new_data_win0)
+   new_data_win0["windspeed"] <- rf.pred
+   new_final <- rbind(new_data_win0, new_data_winN0)
+   new_final <- new_final[order(new_final$datetime), ]
+   
+   return(new_final)
+}
+
+#train_final <- predictWind(train_no_Out)
+train_final <- predictWind(train_new)
+#head(train_final,10)
+```
+
+
+```{r}
+test_final <- predictWind(test_new)
+#head(test_final, 10)
+```
+
+
+```{r}
+which(train_final["windspeed"] == 0)
+which(test_final["windspeed"] == 0)
+```
+
+Notice that all values under windspeed are non-zero now. Let's look at the distribution plot for train and test again:
+
+
+```{r}
+ggplot(data = train_final, aes(windspeed)) + 
+  geom_histogram(aes(y = ..density..), binwidth = 5, fill = 'steelblue') + 
+  geom_density(alpha = 0.2, fill = "#FF6666") + 
+  ggtitle("Count of windspeed in training dataset after replacing 0") + 
+  theme_bw()
+  
+ggplot(data = test_final, aes(windspeed)) + 
+  geom_histogram(aes(y = ..density..), binwidth = 5, fill = 'steelblue') + 
+  geom_density(alpha = 0.2, fill = "#FF6666") + 
+  ggtitle("Count of windspeed in test dataset after replacing 0") + 
+  theme_bw()
+```
+
+
+The distribution plot after replacing 0 by random forest algorithm is much better than the previous one. Before Fitting the prediction model, let's see the corrlation between some features. I excluded year, month, mday(factor) and wday(factor). These variables potentially do not affect numbers of count very much.  
+
+
+### Correlation Analysis:
+```{r}
+train_final$count <- train_new$count
+matrixForCorr <- function(old_data){
+  cf = c("season","holiday","workingday",
+         "weather","temp","atemp","humidity","windspeed","hour", "count")
+  new_data = old_data[, cf]
+  new_data$season <- as.numeric(old_data$season)
+  new_data$holiday <- as.numeric(old_data$holiday)
+  new_data$workingday <- as.numeric(old_data$workingday)
+  new_data$weather <- as.numeric(old_data$weather)
+  
+  return(new_data)
+}
+
+train_for_corr <- matrixForCorr(train_final)
+#head(train_for_corr,10)
+```
+
+
+```{r}
+library(corrplot)
+corrM <- cor(train_for_corr)
+corrplot(cor = corrM, method = "number", type = "lower")
+```
+
+From the correlation matrix, I could that temperature and atemp are highly correlated. All continous variable are correlated with count. 
+
+
+### Cluster hour to factor:
+
+```{r}
+library(rpart)
+library(rpart.plot)
+
+cluster_hour <- rpart(count ~ hour, data = train_final, control = list(cp=0.025))
+rpart.plot(cluster_hour)
+```
+
+If I treat hour as numeric, then when I use the information from nearby hours, 0 and 23 should be close. Therefore, I use decision tree to break down hours based on count, and split it into different intervels. 
+
+```{r}
+create_bin <- function(old_data){
+  data <- old_data
+  data$hour_bin <- 0
+  data$hour_bin[data$hour < 7] = 1
+  data$hour_bin[data$hour >= 7 & data$hour < 16] = 2
+  data$hour_bin[data$hour >= 16 & data$hour < 19] = 3
+  data$hour_bin[data$hour == 19] = 4
+  data$hour_bin[data$hour == 21] = 5
+  data$hour_bin[data$hour > 21] = 6
+  data$hour_bin <- as.factor(data$hour_bin)
+
+  return(data)
+}
+
+train_final_bin <- create_bin(train_final)
+test_final_bin <- create_bin(test_final)
+```
+
+
+<!-- ### Normalization -->
+
+<!-- I will perform a standardization method for continous values in the dataset: temp, atemp, humidity and windspeed, but this method should be only used in non-tree method like regression and neural networks. Tree-based method and MARS can omit this. -->
+
+<!-- ```{r} -->
+<!-- #train_final_bin$count <- log(train_final_bin$count+1) -->
+<!-- normal01 <- function(old_data){ -->
+<!--   cols <- old_data[,c(6:9,15)] -->
+<!--   maxs <- apply(cols, 2, max) -->
+<!--   mins <- apply(cols, 2, min) -->
+<!--   new_data <- scale(cols, center = mins, scale = maxs - mins) -->
+
+<!--   return(new_data) -->
+<!-- } -->
+
+<!-- new_data <- normal01(train_final_bin) -->
+<!-- train_normal <- cbind(train_final_bin[, -c(6:9,15)], new_data) -->
+
+<!-- normaltest <- function(old_data){ -->
+<!--   cols <- old_data[,c(6:9)] -->
+<!--   maxs <- apply(cols, 2, max) -->
+<!--   mins <- apply(cols, 2, min) -->
+<!--   new_data <- scale(cols, center = mins, scale = maxs - mins) -->
+
+<!--   return(new_data) -->
+<!-- } -->
+
+<!-- new_test <- normaltest(test_final_bin) -->
+<!-- test_normal <- cbind(test_final_bin[, -c(6:9)], new_test) -->
+<!-- ``` -->
+
+## Model Building:
+
+In this section, I will perform three models that suitable for this dataset. Before that, I used the batch function provided by Prof. Song to find the rows corresponds to the start and end of each month. 
+
+```{r}
+batches <- function(dataset){ 
+  
+  batch_index <- matrix(nrow = 2, ncol = 24) # two years, total of 24 months
+  cnt <- 1
+  tt_index <- 1:dim(dataset)[1]
+  
+  for (y in unique(dataset$year)){ # find rows for corresponding month
+    for (m in unique(dataset$month)) { 
+      tmp = tt_index[dataset$year == y & dataset$month == m]
+      batch_index[1,cnt] <- min(tmp)
+      batch_index[2,cnt] <- max(tmp)
+      cnt = cnt + 1
+    }
+  }
+  return(batch_index)
+}
+
+train_bat <- batches(train_final_bin)
+test_bat <- batches(test_final_bin)
+```
+
+### Covariates selection:
+
+Up to this point, I have not eliminate any covariates in the training dataset. Now, I want to discuss which of those factors shuold be use in the model. First, mday should be eliminated. In training dataset, mday is a factor with 19 different levels(1-19), in test dataset, mday is also a factor but with different levels(19-28/29/30/31). This will cause problem when generate prediction values. Second, wday should also be eliminated. wday represents the same thing as workingday factor. Two factors(wday and workingday) will cause collinearity problem in the model, which can affect accuracy score. Month should also be eliminated, as it represents the same thing with season and weather in this case. For example, the number of counts in Jan. is low not only because of it is January, but also mainly because it is winter and the weather is normally cold, therefore the number of counts is low. Lastly, I eliminate year as well.
+
+I also include the hour_bin factor. It is the cluster of hour covariates, I find that there is a trend on count for different time intervels. 
+
+Covariates used in model: season, workingday, weather, holiday, temp, atemp, humidity, windspeed, hour and hour_bin
+
+
+### First Model: Multivariate Adaptive Regression Splines (MARS)
+
+Reference: https://bradleyboehmke.github.io/HOML/mars.html
+
+I will start with linear model first and use this model as a basline. I selected multivariate adaptive regression splines for the following reason:
+1. By looking the dataset, there is no evidence to prove that covariates have a linear relation with the response. 
+2. This algorithm is a convenient approach to fit data that is non-linear. It can fit polynomial regression by placing knots in the entire dataset.
+3. Unlike linear regression, multivariate adaptive regression spline does not required to standardize the data.
+
+```{r}
+train_final_bin$count <- log(train_new$count+1)
+```
+
+```{r, eval=FALSE}
+library(earth)
+library(caret)
+
+datetime <- test_final_bin$datetime
+submission_mars <- data.frame(datetime, "count")
+
+for (i in 1:dim(test_bat)[2]){
+  train_mars2 <- train_final_bin[train_bat[1,1]:train_bat[2,i], c(2:10,15,16)]
+  test_mars2 <- test_final_bin[test_bat[1,i]:test_bat[2,i], c(2:10,15)]
+  hyper_grid_mars <- expand.grid( # hyperparameter tuning using train function in caret
+    degree = c(1:6),
+    nprune = seq(2,20, length.out = 10)
+  )
+  tuned_mars <- train(
+    x = subset(train_mars2, select = -count),
+    y = train_mars2$count,
+    method = "earth",
+    metric = "RMSE",
+    trControl = trainControl(method = "cv", number = 10), # use 10-fold cv to train
+    tuneGrid = hyper_grid_mars
+  )
+  best_para <- tuned_mars$bestTune
+  best_nprune <- best_para[, "nprune"] # get the best parameter for nprune
+  best_degree <- best_para[, "degree"] # get the best parameter for degree
+  
+  mars_fit <- earth(count ~ ., data = train_mars2, degree = best_degree, nprune = best_nprune, minspan = 1, endspan = 1)
+  pred_mars <- predict(mars_fit, test_mars2)
+  submission_mars[test_bat[1,i]:test_bat[2,i], "count"] <- exp(pred_mars) - 1
+}
+```
+
+This model will give me a prediction error of 0.55 in Kaggle. I will use this score as a baseline score for future algorithms.
+
+
+### Second model: Random Forest
+
+The reason why I selected random forest is because of the following reason:
+1. Random Forest can be used in regression task.
+2. This algorithm can maintain the accuracy of a large dataset.
+3. It will prevent the overfitting problem.
+4. It can handle large dataset with high dimension. In this case, The dimension is 12.
+5. The bagging algorithm will build multiple trees and combined them for a better one.
+
+
+```{r,eval=FALSE}
+library(ranger)
+library(dplyr)
+library(doParallel)
+registerDoParallel(cores = 4)
+datetime <- test_final_bin$datetime
+new_submission <- data.frame(datetime, count = NA)
+#train_final_St$count <- log(train_final_St$count+1)
+for (i in 1:dim(test_bat)[2]){ 
+  month_train <- train_final_bin[train_bat[1,1]:train_bat[2,i], c(2:10,15,16)] # use only historical data
+  month_test <- test_final_bin[test_bat[1,i]:test_bat[2,i], c(2:10,15)]
+  hyper_grid <- expand.grid( # hyperparameter grid for tunning
+    mtry = seq(2,8), # values for mtry 
+    node_size = seq(3,6), # values for node size  
+    max_depth = seq(2,7), # values for max depth
+    OOB_RMSE = 0 # this is used for find the minimum RMSE value
+  )
+  for (j in 1:nrow(hyper_grid)){ # loop though all hyperparameters
+    rf <- ranger( # train model
+      formula = count ~ .,
+      data = month_train,
+      num.trees = 650, # use a large number of trees, I selected 650 trees
+      mtry = hyper_grid$mtry[j], # record each mtry values
+      min.node.size = hyper_grid$node_size[j], # record minimum node size values
+      max.depth = hyper_grid$max_depth[j], # record max depth values
+      #sample.fraction = 0.8,
+      num.threads = 4,
+      seed = 3
+    )
+    hyper_grid$OOB_RMSE[j] <- sqrt(rf$prediction.error)  # find the minimum prediction error
+  }
+  ind <- which.min(hyper_grid[, "OOB_RMSE"]) # find the index for the minimum prediction error
+  optimal_mtry <- hyper_grid[ind, 1] # find the set of optimal parameters in that index
+  node_size <- hyper_grid[ind, 2]
+  max_dep <- hyper_grid[ind, 3]
+  rf <- ranger(count ~ ., data = month_train, num.trees = 650, mtry = optimal_mtry, min.node.size = node_size, max.depth = max_dep, sample.fraction = 0.7, seed = 3, num.threads = 4) # fit final model
+  pred <- predict(rf, month_test)
+  new_submission[(test_bat[1,i]:test_bat[2,i]), 'count'] <- exp(pred$predictions)-1 # write to csv
+  
+}
+```
+
+The grid search result for RF:
+
+```{r}
+head(hyper_grid,5)
+```
+
+For Random Forest, the best score acheived is 0.47, which is much better than MARS. I did not tune number of trees in the algorithm, because I found that the prediction error converges to a very small number when number of trees is large than 500. Therefore, I use 500 trees here.
+
+
+### Third Model: Gradient Boosting Machine
+
+I selected GBM for the following reason:
+
+1. It is an ensemble model for improving model accuracy.
+2. For GB, each model is added by sequentially to an ensemble. For each model, it will correct its own predecessor in terms of the residual error.
+```{r, eval=FALSE}
+library(gbm)
+registerDoParallel(cores = 4)
+submission_gbm <- data.frame(datetime, count = NA) # create a dataframe to store prediction value
+
+for (j in 1:dim(test_bat)[2]){
+  train <- train_final_bin[train_bat[1,1]:train_bat[2,j], c(2:10,15,16)] # get train and test data for GBM
+  test <- test_final_bin[test_bat[1,j]:test_bat[2,j], c(2:10,15)]
+  hyper_grid_gbm <- expand.grid( # hyperparameter tuning by GridSearch
+  shrinkage = c(0.01, 0.03, 0.05, 0.1, 0.3), # interaction depth
+  interaction.depth = c(1, 3, 5), # interaction depth 
+  n.minobsinnode = c(2:6), # min number of observation allowed in terminal node
+  bag.fraction = c(.65, .8, 1), # stochastic gradient descent
+  optimal_trees = 0,               
+  min_RMSE = 0                    
+  )
+  for(i in 1:nrow(hyper_grid_gbm)) {
+    set.seed(123)
+
+    gbm.tune <- gbm( # loop through all parameter to find the optimal set
+      formula = count ~ .,
+      distribution = "gaussian",
+      data = train,
+      n.trees = 2500,
+      interaction.depth = hyper_grid_gbm$interaction.depth[i],
+      shrinkage = hyper_grid_gbm$shrinkage[i],
+      n.minobsinnode = hyper_grid_gbm$n.minobsinnode[i],
+      bag.fraction = hyper_grid_gbm$bag.fraction[i],
+      train.fraction = .80, # use 80% training data for train, and 20% for validation(used to compute validation error)
+      n.cores = 4, 
+      verbose = FALSE
+    )
+    
+    # add the minium training error and optimal trees to grid
+    hyper_grid_gbm$optimal_trees[i] <- which.min(gbm.tune$valid.error)
+    hyper_grid_gbm$min_RMSE[i] <- sqrt(min(gbm.tune$valid.error))
+  }
+  
+  ind_gbm = which.min(hyper_grid_gbm[, "min_RMSE"]) # Get the minimum rmse
+  shrinkage = hyper_grid_gbm[ind_gbm, 1] # get each optimal parameter
+  interaction = hyper_grid_gbm[ind_gbm, 2]
+  min_node = hyper_grid_gbm[ind_gbm, 3]
+  fraction = hyper_grid_gbm[ind_gbm, 4]
+  trees = hyper_grid_gbm[ind_gbm, 5]
+  
+  gbm1 <- gbm( # fit final model
+    formula = count ~ ., 
+    data = train,
+    distribution = "gaussian",
+    n.trees = trees,
+    interaction.depth = interaction,
+    shrinkage = shrinkage,
+    n.minobsinnode = min_node,
+    bag.fraction = fraction,
+    train.fraction = 1,
+    n.cores = 4,
+    verbose = FALSE
+  )
+  pred_gbm <- predict(gbm1, test, n.trees = gbm1$n.trees) # prediction
+  submission_gbm[(test_bat[1,j]:test_bat[2,j]), 'count'] <- exp(pred_gbm)-1 # record
+  
+}
+
+#write.csv(submission_gbm, file = "gradient_boosting_submit.csv", row.names = FALSE)
+# summary( 
+#   gbm1, 
+#   cBars = 10,
+#   method = relative.influence, 
+#   las = 2
+# )
+
+
+```
+
+The grid search result for GB:
+
+```{r}
+head(hyper_grid_gbm, 5)
+```
+
+For GB, the best Score acheived is 0.446, which is better than random forest. It is make sense because this algorithm converts individual weak learner to large learners. This will catch more trends in the training dataset. 
+
+
+```{r, eval=FALSE}
+#Another Boosting method: XGBoost
+# library(xgboost)
+# 
+# temp_train <- train_final_bin[, -c(1,11,12,13,14)]
+# temp_test <- test_final_bin[, -c(1,11,12,13,14)]
+# temp_test$count <- 0
+# model_train <- model.matrix(count ~ ., data = temp_train)
+# model_test <- model.matrix(count ~ ., data = temp_test)
+# label_y <- temp_train$count
+# for (j in 1:dim(test_bat)[2]){
+#   month_xg <- model_train[train_bat[1,1]:train_bat[2,j], ]
+#   month_y <- label_y[train_bat[1,1]:train_bat[2,j]]
+#   test_xg <- model_test[test_bat[1,j]:test_bat[2,j], ]
+#   hyper_grid_xg <- expand.grid(
+#     eta = c(0.01, 0.03, 0.05, 0.1), #v1
+#     max_depth = c(2,3,5,7),#v2
+#     min_child_weight = c(1,3,5,7), #v3
+#     subsample = c(0.7, 0.8, 1),#v4
+#     colsample_bytree = c(0.70,0.85,1), #V5
+#     optimal_tree = 0, #v6
+#     min_RMSE = 0 #v7
+#   )
+#   for(i in 1:nrow(hyper_grid_xg)) {
+#     set.seed(3)
+#     xgb.tune <- xgb.cv(
+#       data = month_xg,
+#       label = month_y,
+#       nrounds = 1000,
+#       nfold = 5,
+#       objective = "reg:squarederror",
+#       eta = hyper_grid_xg$Var1[i],
+#       max_depth = hyper_grid_xg$Var2[i],
+#       min_child_weight = hyper_grid_xg$Var3[i],
+#       subsample = hyper_grid_xg$Var4[i],
+#       colsample_bytree = hyper_grid_xg$Var5[i],
+#       verbose = 0,
+#       nthread = 4,
+#       early_stopping_rounds = 10
+#     )
+# 
+#     hyper_grid_xg$Var6[i] <- which.min(xgb.tune$evaluation_log$test_rmse_mean)
+#     hyper_grid_xg$Var7[i] <- min(xgb.tune$evaluation_log$test_rmse_mean)
+#   }
+#   ind_xg <- which.min(hyper_grid_xg[, "Var7"])
+#   eta <- hyper_grid_xg[ind_xg, 1]
+#   max_depth <- hyper_grid_xg[ind_xg, 2]
+#   min_child <- hyper_grid_xg[ind_xg, 3]
+#   subsample <- hyper_grid_xg[ind_xg, 4]
+#   colsample <- hyper_grid_xg[ind_xg, 5]
+#   optimal_tree <- hyper_grid_xg[ind_xg, 6]
+# 
+#   xg_fit <- xgboost(data = month_xg, label = month_y, nrounds = optimal_tree, eta = eta, max_depth = max_depth, min_child_weight = min_child, subsample = subsample, colsample_bytree = colsample_bytree, objective = "reg:squarederror", nthread = 4, verbose = 0)
+# 
+#   pred_xg <- predict(xg_fit, test_xg)
+#   submission_xg[(test_bat[1,j]:test_bat[2,j]), 'count'] <- exp(pred_xg)-1
+# 
+# }
+#Tunning XGBoost requires lots of time, the score is 0.47, which is not that good.
+```
+
+
+## Conclusion:
+
+In this project, I first apply some preprocess steps on both train and test dataset; then I perform data visualization in training dataset, by doing this, I have a basic understanding on how the response related to different covariates. 
+
+For feature engieering, I create hour bins as a factor by using decision tree. I cluster hour to different intervels and change each hour to six interverls denoted by 1~6. I found that there are some patterns for count during every 4-5 hour. I also find out there are some manty 0s in windspeed variable, this is may because they are NA value and then replaced by 0. This will have a huge affect on model accuracy. Therefore, I build a random forest algorithm and train over those data points with windspeed not equal to 0, then I use the model to predict over the rest of data points. Furthermore, I also removed outliers, since this dataset only has around 300 outliers, this operation will not affect final model accuracy very much.
+
+For model building, I explore with three different predictive models: Multivariate Adaptive Regression Splines, Random Forest and Gradient Boosting. I sue MARS as a baseline in terms of the prediction error. The best score acheived by random forest is around 0.47. The GB algorithm acheives the best score with around 0.45. The combined score from random forest and gradient boosting is 
+
+
+## Future Steps:
+
+In this part, I will discuss some suggestion for improving model accuracy.
+1. Instead of remove outliers, replace the value that outside the original upper limit by 95% quantile value; replace the value outside the original lower limit by 5% quantile.
+2. Fit a better model for replace 0s in windspeed
+3. Fit a larger model using boosting algorithm. More trees in the model, more trends will be captured. 
+4. Since the data is highly related to datetime, I could try time series forecast on this dataset.
